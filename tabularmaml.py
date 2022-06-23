@@ -1,17 +1,91 @@
-import pandas as pd
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-import autokeras as ak
-from sklearn.metrics import accuracy_score
 from typing import Optional
+
+import autokeras as ak
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from sklearn.metrics import accuracy_score
+from tensorflow import keras
+
+"""Model Agnostic Meta-Learning (MAML) with transfer learning designed for clinical data.
+Copyright (C) 2022 Dillion Fox
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+    
+    
+    Example Usage:
+    >>> # Load prepared tabular datasets
+    >>> X_train = pd.read_csv('X_train.csv', index_col=0)
+    >>> y_train = pd.read_csv('y_train.csv', index_col=0)
+
+    >>> X_test = pd.read_csv('X_test.csv', index_col=0)
+    >>> y_test = pd.read_csv('y_test.csv', index_col=0)
+
+    >>> # Generate synthetic training datasets
+    >>> # synthetic_train_x, synthetic_train_y = generate_fake_datasets(X_train, y_train)
+    >>> synthetic_train_x, synthetic_train_y = oversample(X_train, y_train)
+
+    >>> # Construct object to store data and auto-build basic keras model
+    >>> clinical_data_model = ClinicalDataModel(synthetic_train_x, synthetic_train_y,
+    >>>                                         X_train, y_train,
+    >>>                                         X_test, y_test)
+
+    >>> maml = TabularMAML(clinical_data_model)
+     
+"""
 
 
 class ClinicalDataModel:
-    def __init__(self, general_train_x: pd.DataFrame, general_train_y: pd.DataFrame,
-                 specific_train_x: pd.DataFrame, specific_train_y: pd.DataFrame,
-                 test_x: pd.DataFrame, test_y: pd.DataFrame,
-                 n_models=5):
+    r"""Convenience class for storing 6 types of data for meta-transfer learning.
+    I wrote this tool with a specific use-case in mind: clinical trials data.
+    If we have 10 historical clinical trial datasets that we want to use to enrich
+    our active clinical trial, then we need to differentiate between historical data
+    (what I'm calling general_train), active trial data (which I'm calling specific_train),
+    and hold-out data for testing. Of course, there could be more categories for more
+    careful training/testing, but I have not encountered enough data to justify
+    further splitting.
+
+    - General train: The bulk of the training data. "Historical data". Builds the meta-model.
+    - Specific train: The model you want to train in a transfer-learning process.
+    - Test: Hold-out test data.
+
+    By default, the class will use autokeras to build a starting point for a neural network based
+    on the general training data. Autokeras figures out how many layers to use and how to parameterize
+    each layer.
+
+    Args:
+        - general_train_x (pd.DataFrame): Training data to build meta-model
+        - general_train_y (pd.DataFrame): Training data labels for meta-model
+        - specific_train_x (pd.DataFrame): Training data for transfer-learning model
+        - specific_train_y (pd.DataFrame): Training data labels for transfer-learning model
+        - test_x (pd.DataFrame): Hold-out data for testing
+        - test_y (pd.DataFrame): Hold-out data labels for testing
+        - n_models (optional, int): Number of models for autokeras to build and evaluate
+
+    """
+
+    def __init__(
+            self,
+            general_train_x: pd.DataFrame,
+            general_train_y: pd.DataFrame,
+            specific_train_x: pd.DataFrame,
+            specific_train_y: pd.DataFrame,
+            test_x: pd.DataFrame,
+            test_y: pd.DataFrame,
+            n_models: int = 5
+    ) -> None:
+
         self.general_train_x = general_train_x
         self.general_train_y = general_train_y
         self.specific_train_x = specific_train_x
@@ -49,6 +123,12 @@ class ClinicalDataModel:
         """
 
     def _build_model(self):
+        r"""Very basic execution framework for calling Autokeras. Of course, there are many kwargs
+        that users might want to play with, so this function should be re-imagined to unlock the
+        features of autokeras.
+
+        This method sets :attr: self.train_accuracy and :attr: self.model
+        """
 
         # Use AutoKeras to build and evaluate n models
         clf = ak.StructuredDataClassifier(overwrite=True, max_trials=self.n_models)
@@ -69,7 +149,40 @@ class ClinicalDataModel:
 
 
 class TabularMAML:
-    def __init__(self, clinical_data: ClinicalDataModel, num_epochs:Optional[int]=1000):
+    r"""Custom implementation of Model Agnostic Meta-Learning (MAML) with a Transfer Learning
+    step. Please see <https://arxiv.org/pdf/1703.03400.pdf> for details regarding MAML.
+
+    The __init__ method calls two key methods that execute the internal logic of the class.
+        - _execute_meta_learning(): This runs the meta-learning stage. This method probably should
+            be made public with the option for users to pass kwargs.
+        - _execute_transfer_learning(): This method runs the transfer-learning stage. Again, this
+            method should be made public.
+
+    Args:
+        - clinical_data (ClinicalDataModel): Please see ClinicalDataModel, defined above. This stores
+            the data necessary for training and testing a meta-learning model and a transfer-learning
+            model.
+        - num_epochs (int): Number of meta-learning iterations to execute.
+
+    Note:
+        - Some important attributes are being assigned in __init__. Users may want to choose different
+            values. These should be passed as kwargs.
+            - alpha (float):
+            - beta (float):
+            - n_chunks (int):
+
+    Note:
+        - A metric reflecting the transferability of a model to a new dataset, LEEP, has been implemented
+            as a property and can be computed by calling '.leep'
+
+    """
+
+    def __init__(
+            self,
+            clinical_data: ClinicalDataModel,
+            num_epochs: Optional[int] = 1000
+    ) -> None:
+
         self.clinical_data = clinical_data
         self.alpha = 0.001
         self.beta = 0.001
@@ -94,6 +207,10 @@ class TabularMAML:
         """
 
     def _execute_meta_learning(self):
+        r"""
+
+
+        """
 
         # Initialize meta-update optimizer
         optimizer_meta_update = self._optimizer(learning_rate=self.beta)
@@ -103,7 +220,6 @@ class TabularMAML:
         current_model = keras.models.clone_model(self.clinical_data.model)
 
         for epoch in range(self.num_epochs):
-
             # Store weights of current model (theta)
             theta = np.array(current_model.get_weights(), dtype=object)
             gradient_sum = self._meta_learn_step(current_model, theta, index_chunk_list)
@@ -123,6 +239,11 @@ class TabularMAML:
         self.intermediate_model = current_model
 
     def _execute_transfer_learning(self):
+        r"""
+
+
+        """
+
         # Make local copy of model and set all layers to "trainable"
         base_model = keras.models.clone_model(self.intermediate_model)
         base_model.trainable = True
@@ -174,6 +295,11 @@ class TabularMAML:
                        y=self.clinical_data.test_y)
 
     def _meta_learn_step(self, current_model, theta, index_chunk_list):
+        r"""
+
+
+        """
+
         gradient_sum = None
         for batch_num, index_chunk in enumerate(index_chunk_list):
 
@@ -202,6 +328,11 @@ class TabularMAML:
         return gradient_sum
 
     def _model_update_step(self, current_model, index_batch):
+        r"""
+
+
+        """
+
         train_x = self.clinical_data.train_x.loc[index_batch]
         train_y = self.clinical_data.train_y.loc[index_batch]
         # test_x = self.clinical_data.test_x
@@ -234,13 +365,12 @@ class TabularMAML:
 
     @property
     def leep(self):
-        """
-        A Measure to evaluate the transferability of learned representations
+        r"""A Measure to evaluate the transferability of learned representations. Please see:
+        <https://arxiv.org/pdf/2002.12462.pdf>
 
-        Value typically ranges from (-4, -0.5). Larger values (closer to 0) are better.
-
-        https://arxiv.org/pdf/2002.12462.pdf
+        Note: Value typically ranges from (-4, -0.5). Larger values (closer to 0) are better.
         """
+
         prediction_df = self.clinical_data.test_y
         n = prediction_df.shape[0]
         prediction_df.reset_index(inplace=True, drop=True)
@@ -286,6 +416,16 @@ class TabularMAML:
 
 
 def generate_fake_datasets(x_df, y):
+    r"""Convenience function for generating fake data. This is helpful
+        for playing around with the code and running benchmarks.
+
+        Args:
+            - x_df (pd.DataFrame): input dataframe with desired shape
+            - y (pd.Series): input data frame labels
+
+        Return:
+            - tuple (pd.DataFrame, pd.DataFrame): data, labels
+    """
     x_new = []
     y_new = []
     mu = 0
@@ -300,6 +440,16 @@ def generate_fake_datasets(x_df, y):
 
 
 def oversample(x_df, y):
+    r"""Convenience function for generating fake data using SMOTE. This is helpful
+        for playing around with the code and running benchmarks.
+
+        Args:
+            - x_df (pd.DataFrame): input dataframe with desired shape
+            - y (pd.Series): input data frame labels
+
+        Return:
+            - tuple (pd.DataFrame, pd.DataFrame): data, labels
+        """
     from imblearn.over_sampling import SMOTE
     over_sampled = SMOTE(sampling_strategy=lambda y: {0.0: 5000, 1.0: 5000})
     x_synthetic, y_synthetic = over_sampled.fit_resample(x_df, y)
